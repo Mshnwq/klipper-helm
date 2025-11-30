@@ -190,8 +190,4 @@ if [[ -n "${TIMEOUT}" ]]; then
   TIMEOUT_ARG="--timeout ${TIMEOUT}"
 fi
 
-helm_content_decode
-if [[ "$1" != "delete" ]]; then
-  helm_repo_init
-fi
 helm_update "$@"
