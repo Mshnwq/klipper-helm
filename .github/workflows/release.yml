@@ -20,22 +20,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set lowercase repo name
-        id: repo
-        run: echo "repo_lowercase=$(echo '${{ env.GHCR_REPO }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_OUTPUT
-
-jobs:
-  build:
-    runs-on: ubuntu-latest
-
-    permissions:
-      contents: read
-      packages: write
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
       - name: Login to GitHub Container Registry
         uses: docker/login-action@v3
         with:
@@ -46,9 +30,18 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Set commit hash tag
-        id: vars
-        run: echo "sha_short=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+      - name: Get current date
+        id: date
+        run: |
+          echo "SHORT_SHA=${GITHUB_SHA::7}" >> $GITHUB_ENV
+
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.GHCR_REPO }}
+          tags: |
+            type=raw,value=${{ env.SHORT_SHA }}
 
       - name: Build and push
         uses: docker/build-push-action@v6
@@ -56,4 +49,4 @@ jobs:
           context: .
           platforms: linux/amd64
           push: true
-          tags: ${{ steps.repo.outputs.repo_lowercase }}:${{ steps.vars.outputs.sha_short }}
+          tags: ${{ steps.meta.outputs.tags }}
