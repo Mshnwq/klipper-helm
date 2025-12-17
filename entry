@@ -1,58 +1,58 @@
 #!/bin/bash
 helm_update() {
-  LINE="$(${HELM} ls --all -f "^${NAME}\$" --namespace ${TARGET_NAMESPACE} --output json | jq -r "${JQ_CMD}" | tr '[:upper:]' '[:lower:]')"
-  IFS=, read -r INSTALLED_VERSION STATUS _ <<<${LINE}
+  LINE="$($HELM ls --all -f "^${NAME}\$" --namespace "$TARGET_NAMESPACE" --output json | jq -r "$JQ_CMD")"
+  IFS=, read -r INSTALLED_VERSION STATUS _ <<<"${LINE,,}"
   VALUES=""
   for VALUES_FILE in /config/*.yaml; do
-    VALUES="${VALUES} --values ${VALUES_FILE}"
+    VALUES="$VALUES --values $VALUES_FILE"
   done
 
   # Determine the chart reference - use REPO directly if it starts with oci://
-  if [[ "${REPO}" =~ ^oci:// ]]; then
+  if [[ $REPO =~ ^oci:// ]]; then
     # For OCI, CHART should be just the chart name, not repo/chart
     # Extract chart name from CHART variable if it contains a slash
-    if [[ "${CHART}" == */* ]]; then
+    if [[ "$CHART" == */* ]]; then
       CHART_NAME="${CHART##*/}"
     else
-      CHART_NAME="${CHART}"
+      CHART_NAME=$CHART
     fi
-    CHART_REF="${REPO}/${CHART_NAME}"
+    CHART_REF="$REPO/$CHART_NAME"
   else
     # Traditional helm repo
-    CHART_REF="${CHART}"
+    CHART_REF=$CHART
   fi
 
   # Uninstall or delete chart if asked to delete and the chart was found; otherwise no-op
-  if [[ "$1" = "delete" ]]; then
-    if [[ -z "${INSTALLED_VERSION}" ]]; then
-      echo "No ${HELM} chart installed; nothing to delete" >>${TERM_LOG}
+  if [[ $1 = "delete" ]]; then
+    if [[ -z $INSTALLED_VERSION ]]; then
+      echo "No $HELM chart installed; nothing to delete" >>$TERM_LOG
       exit
     fi
-    echo "Uninstalling ${HELM} chart" >>${TERM_LOG}
-    ${HELM} uninstall ${NAME} --namespace ${TARGET_NAMESPACE} --wait || true
+    echo "Uninstalling $HELM chart" >>"$TERM_LOG"
+    "$HELM" uninstall "$NAME" --namespace "$TARGET_NAMESPACE" --wait || true
     exit
   fi
 
   # No current version and status, safe to install
-  if [[ "${INSTALLED_VERSION}" =~ ^(|null)$ ]] && [[ "${STATUS}" =~ ^(|null)$ ]]; then
-    echo "Installing ${HELM} chart" >>${TERM_LOG}
-    ${HELM} "$@" ${NAME_ARG} ${NAME} "${CHART_REF}" ${CA_FILE_ARG} ${INSECURE_TLS_ARG} ${PLAIN_HTTP_ARG} ${TIMEOUT_ARG} ${VALUES}
+  if [[ $INSTALLED_VERSION =~ ^(|null)$ ]] && [[ $STATUS =~ ^(|null)$ ]]; then
+    echo "Installing $HELM chart" >>"$TERM_LOG"
+    "$HELM" "$@" "$NAME_ARG" "$NAME" "$CHART_REF" "$CA_FILE_ARG" "$INSECURE_TLS_ARG" "$PLAIN_HTTP_ARG" "$TIMEOUT_ARG" "$VALUES"
     exit
   fi
 
   # If a previous helm operation was interrupted unexpectedly or release state is corrupted, set it to failed.
-  if [[ "${STATUS}" =~ ^(pending-install|pending-upgrade|pending-rollback|superseded|uninstalling)$ ]]; then
-    echo Previous helm job was interrupted, updating status from ${STATUS} to failed
-    echo "Resetting ${HELM} release status from '${STATUS}' to 'failed'" >>${TERM_LOG}
-    ${HELM} set-status ${NAME} failed --namespace ${TARGET_NAMESPACE}
+  if [[ "$STATUS" =~ ^(pending-install|pending-upgrade|pending-rollback|superseded|uninstalling)$ ]]; then
+    echo "Previous helm job was interrupted, updating status from $STATUS to failed"
+    echo "Resetting $HELM release status from '$STATUS' to 'failed'" >>$TERM_LOG
+    "$HELM" set-status "$NAME" failed --namespace "$TARGET_NAMESPACE"
     # Upgrades can be retried; install and rollback will be handled as failure below.
     # If release state is superseded, chart deployment might be correct, try an upgrade first.
     # If this upgrade also fails, retries of the job will handle that as failure due to the release state change.
-    if [[ "${STATUS}" =~ ^(pending-upgrade|superseded)$ ]]; then
-      echo "Retrying upgrade of ${HELM} chart" >>${TERM_LOG}
-      echo "Retrying upgrade of ${NAME}"
+    if [[ "$STATUS" =~ ^(pending-upgrade|superseded)$ ]]; then
+      echo "Retrying upgrade of $HELM chart" >>"$TERM_LOG"
+      echo "Retrying upgrade of $NAME"
       shift 1
-      ${HELM} upgrade "$@" ${NAME} "${CHART_REF}" ${CA_FILE_ARG} ${INSECURE_TLS_ARG} ${PLAIN_HTTP_ARG} ${TIMEOUT_ARG} ${VALUES}
+      "$HELM" upgrade "$@" "$NAME" "$CHART_REF" "$CA_FILE_ARG" "$INSECURE_TLS_ARG" "$PLAIN_HTTP_ARG" "$TIMEOUT_ARG" "$VALUES"
       exit
     else
       STATUS=failed
@@ -60,36 +60,36 @@ helm_update() {
   fi
 
   # Upgrade only if the chart is already deployed
-  if [[ "${STATUS}" =~ ^deployed$ ]]; then
-    echo "Already installed ${NAME}"
-    ${HELM} mapkubeapis ${NAME} --namespace ${TARGET_NAMESPACE}
-    echo "Upgrading ${HELM} chart" >>${TERM_LOG}
-    echo "Upgrading ${NAME}"
+  if [[ $STATUS =~ ^deployed$ ]]; then
+    echo "Already installed $NAME"
+    "$HELM" mapkubeapis "$NAME" --namespace "$TARGET_NAMESPACE"
+    echo "Upgrading $HELM chart" >>"$TERM_LOG"
+    echo "Upgrading $NAME"
     shift 1
-    ${HELM} upgrade "$@" ${NAME} "${CHART_REF}" ${CA_FILE_ARG} ${INSECURE_TLS_ARG} ${PLAIN_HTTP_ARG} ${TIMEOUT_ARG} ${VALUES}
+    "$HELM" upgrade "$@" "$NAME" "$CHART_REF" "$CA_FILE_ARG" "$INSECURE_TLS_ARG" "$PLAIN_HTTP_ARG" "$TIMEOUT_ARG" "$VALUES"
     exit
   fi
 
   # The chart is in a bad state; try uninstalling it first
-  if [[ "${STATUS}" =~ ^(deleted|failed|null|unknown)$ ]]; then
+  if [[ $STATUS =~ ^(deleted|failed|null|unknown)$ ]]; then
     if [[ "${FAILURE_POLICY:-reinstall}" == "reinstall" ]]; then
-      echo "Uninstalling ${STATUS} ${HELM} chart" >>${TERM_LOG}
-      ${HELM} uninstall ${NAME} --namespace ${TARGET_NAMESPACE} --wait
-      echo Deleted
+      echo "Uninstalling $STATUS $HELM chart" >>"$TERM_LOG"
+      "$HELM" uninstall "$NAME" --namespace "$TARGET_NAMESPACE" --wait
+      echo "Deleted"
       # Try installing now that we've uninstalled
-      echo "Installing ${HELM} chart" >>${TERM_LOG}
-      ${HELM} "$@" ${NAME_ARG} ${NAME} "${CHART_REF}" ${CA_FILE_ARG} ${INSECURE_TLS_ARG} ${PLAIN_HTTP_ARG} ${TIMEOUT_ARG} ${VALUES}
+      echo "Installing $HELM chart" >>"$TERM_LOG"
+      "$HELM" "$@" "$NAME_ARG" "$NAME" "$CHART_REF" "$CA_FILE_ARG" "$INSECURE_TLS_ARG" "$PLAIN_HTTP_ARG" "$TIMEOUT_ARG" "$VALUES"
       exit
     else
-      echo "Release status is '${STATUS}' and failure policy is '${FAILURE_POLICY}', not 'reinstall'; waiting for operator intervention" >>${TERM_LOG}
-      echo "Release status is '${STATUS}' and failure policy is '${FAILURE_POLICY}', not 'reinstall'; waiting for operator intervention"
+      echo "Release status is '$STATUS' and failure policy is '$FAILURE_POLICY', not 'reinstall'; waiting for operator intervention" >>$TERM_LOG
+      echo "Release status is '$STATUS' and failure policy is '$FAILURE_POLICY', not 'reinstall'; waiting for operator intervention"
       exit 1
     fi
   fi
 
   # No special status handling necessary, do whatever we were asked to do
-  echo "Installing ${HELM} chart" >>${TERM_LOG}
-  ${HELM} "$@" ${NAME_ARG} ${NAME} "${CHART_REF}" ${CA_FILE_ARG} ${INSECURE_TLS_ARG} ${PLAIN_HTTP_ARG} ${TIMEOUT_ARG} ${VALUES}
+  echo "Installing $HELM chart" >>"$TERM_LOG"
+  "$HELM" "$@" "$NAME_ARG" "$NAME" "$CHART_REF" "$CA_FILE_ARG" "$INSECURE_TLS_ARG" "$PLAIN_HTTP_ARG" "$TIMEOUT_ARG" "$VALUES"
 }
 
 export CA_FILE=/config/ca-file.pem
@@ -111,7 +111,7 @@ JQ_CMD='"\(.[0].chart),\(.[0].status)"'
 
 set -e -v
 
-if [[ ${KUBERNETES_SERVICE_HOST} =~ .*:.* ]]; then
+if [[ $KUBERNETES_SERVICE_HOST =~ .*:.* ]]; then
   echo "KUBERNETES_SERVICE_HOST is using IPv6"
   CHART="${CHART//%\{KUBERNETES_API\}%/[${KUBERNETES_SERVICE_HOST}]:${KUBERNETES_SERVICE_PORT}}"
 else
@@ -120,35 +120,23 @@ fi
 
 set +v -x
 
-if [[ "${HELM_VERSION}" == "v2" ]]; then
-  echo "Helm v2 is EOL effective 2020-11-13; upgrade your chart to helm v3" >>${TERM_LOG}
+[[ $HELM_VERSION == "v2" ]] && {
+  echo "Helm v2 is EOL effective 2020-11-13; upgrade your chart to helm v3" >>"$TERM_LOG"
   echo "Helm v2 is EOL effective 2020-11-13; upgrade your chart to helm v3"
   exit 64
-fi
+}
+
+[[ -f $CA_FILE ]] && echo >>/tmp/ca-file.pem && cat "$CA_FILE" >>/tmp/ca-file.pem
 
 shopt -s nullglob
-if [[ -f "${CA_FILE}" ]]; then
+for CA_FILE in "$CA_DIR"/*; do
   echo >>/tmp/ca-file.pem
-  cat "${CA_FILE}" >>/tmp/ca-file.pem
-fi
-for CA_FILE in ${CA_DIR}/*; do
-  echo >>/tmp/ca-file.pem
-  cat "${CA_FILE}" >>/tmp/ca-file.pem
+  cat "$CA_FILE" >>/tmp/ca-file.pem
 done
-if [[ -f "/tmp/ca-file.pem" ]]; then
-  CA_FILE_ARG="--ca-file /tmp/ca-file.pem"
-fi
 
-if [[ "${INSECURE_SKIP_TLS_VERIFY}" == "true" ]]; then
-  INSECURE_TLS_ARG="--insecure-skip-tls-verify"
-fi
-
-if [[ "${PLAIN_HTTP}" == "true" ]]; then
-  PLAIN_HTTP_ARG="--plain-http"
-fi
-
-if [[ -n "${TIMEOUT}" ]]; then
-  TIMEOUT_ARG="--timeout ${TIMEOUT}"
-fi
+[[ -f "/tmp/ca-file.pem" ]] && CA_FILE_ARG="--ca-file /tmp/ca-file.pem"
+[[ $INSECURE_SKIP_TLS_VERIFY == "true" ]] && INSECURE_TLS_ARG="--insecure-skip-tls-verify"
+[[ $PLAIN_HTTP == "true" ]] && PLAIN_HTTP_ARG="--plain-http"
+[[ -n $TIMEOUT ]] && TIMEOUT_ARG="--timeout $TIMEOUT"
 
 helm_update "$@"
